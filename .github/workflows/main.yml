@@ -1,9 +1,9 @@
-name: XY-RDP Ultimate (Banner & Secure)
+name: XY-RDP Ultimate (Fixed Version)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *' # Estafet setiap 6 jam
 
 concurrency:
   group: rdp-session
@@ -13,52 +13,92 @@ jobs:
   secure-rdp:
     runs-on: windows-latest
     steps:
-      - name: Create XY-Environment
+      - name: 1. XY Brand Header & Environment Setup
         run: |
-          # Buat Folder Kerja
+          Write-Host "=========================================="
+          Write-Host "      PROJECT: XY-RDP ULTIMATE SYSTEM    "
+          Write-Host "      Copyright: PoweredBy Kall & XyTeam "
+          Write-Host "=========================================="
+          
+          # Buat Folder Kerja XYTOOLS
           $paths = "C:\XYTOOLS\Coding", "C:\XYTOOLS\Santuy", "C:\XYTOOLS\ScreenShot", "C:\XYTOOLS\Recording"
-          $paths | ForEach-Object { New-Item -Path $_ -ItemType Directory -Force }
+          $paths | ForEach-Object { 
+            if (-not (Test-Path $_)) { New-Item -Path $_ -ItemType Directory -Force }
+          }
 
-      - name: Configure System & Welcome Banner
+      - name: 2. Configure System & Welcome Banner
         run: |
-          # Aktifkan RDP
+          # Aktifkan Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           
-          # Sambutan ala Windows Professional
+          # Banner Sambutan Haekal
           $title = "XY-SYSTEM | AUTHENTICATED ACCESS"
           $msg = "Welcome Back, Haekal!`n`nSystem: XY-RDP Server`nBrand: XY Project`nCopyright: PoweredBy Kall & XyTeam.`n`nEnjoy your session!"
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "legalnoticecaption" -Value $title
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "legalnoticetext" -Value $msg
 
-      - name: Create User from Secret
+      - name: 3. Create XY_User (Fixed Logic)
         run: |
           $pass = "${{ secrets.RDP_PASSWORD }}"
-          if (-not $pass) { $pass = "DefaultXY123!" } # Backup jika secret lupa diisi
+          if (-not $pass) { $pass = "XY_Admin789!" } # Default jika secret kosong
           $securePass = ConvertTo-SecureString $pass -AsPlainText -Force
-          New-LocalUser -Name "XY_User" -Password $securePass -AccountNeverExpires -Force
-          Add-LocalGroupMember -Group "Administrators" -Member "XY_User"
+          
+          if (Get-LocalUser -Name "XY_User" -ErrorAction SilentlyContinue) {
+              Write-Host "User sudah ada."
+          } else {
+              New-LocalUser -Name "XY_User" -Password $securePass -AccountNeverExpires -Description "PoweredBy Kall"
+              Add-LocalGroupMember -Group "Administrators" -Member "XY_User"
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "XY_User"
+          }
           echo "XY_PWD=$pass" >> $env:GITHUB_ENV
 
-      - name: Install Tools & Tailscale
+      - name: 4. Install Apps & Connect Tailscale
         run: |
-          # Install Tailscale & Apps
+          # Install Chocolatey & Apps (VSCode, VLC, ShareX)
           Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           choco install tailscale vscode vlc sharex -y --no-progress
           
-          # Connect Tailscale
+          # Setup Shortcut Folder Screenshot ShareX
+          $sharexPath = "C:\Users\XY_User\Documents\ShareX\Screenshots"
+          if (-not (Test-Path "C:\Users\XY_User\Documents\ShareX")) { New-Item -Path "C:\Users\XY_User\Documents\ShareX" -ItemType Directory -Force }
+          cmd /c mklink /d "$sharexPath" "C:\XYTOOLS\ScreenShot"
+
+          # Jalankan Tailscale
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=XY-SERVER
           $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Loop & Status
+      - name: 5. XY Persistent Loop (Maximized Time)
         run: |
-          Write-Host "XY-RDP AKTIF! IP: $env:TAILSCALE_IP | User: XY_User"
+          Write-Host "=========================================="
+          Write-Host "XY-RDP IS ONLINE!"
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "User: XY_User"
+          Write-Host "Pass: $env:XY_PWD"
+          Write-Host "Folder: C:\XYTOOLS"
+          Write-Host "=========================================="
+          
           $startTime = Get-Date
           while ($true) {
-              $elapsed = (Get-Date) - $startTime
-              if ($elapsed.TotalMinutes -gt 350) { exit 0 }
-              Write-Host "Sesi XY Berjalan: $($elapsed.ToString('hh\:mm\:ss'))"
+              $now = Get-Date
+              $elapsed = $now - $startTime
+              Write-Host "[$($now.ToString('HH:mm:ss'))] XY-Session Active: $($elapsed.ToString('hh\:mm\:ss'))"
+              
+              # Re-check Tailscale status
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" status > $null
+              if ($LASTEXITCODE -ne 0) {
+                  & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+              }
+              
               Start-Sleep -Seconds 300
+              
+              # Exit di menit ke-350 (5 jam 50 menit)
+              if ($elapsed.TotalMinutes -gt 350) { 
+                  Write-Host "Time limit reached. Saving session for handover..."
+                  exit 0 
+              }
           }
