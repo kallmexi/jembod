@@ -1,11 +1,10 @@
-name: RDP 24/7 (Auto-Restart)
+name: XY-RDP Ultimate (Banner & Secure)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *' # Jalan otomatis setiap 6 jam (estafet)
+    - cron: '0 */6 * * *'
 
-# Menghindari bentrokan: Job lama akan dimatikan otomatis saat Job baru mulai
 concurrency:
   group: rdp-session
   cancel-in-progress: true
@@ -14,61 +13,52 @@ jobs:
   secure-rdp:
     runs-on: windows-latest
     steps:
-      - name: Configure Core RDP Settings
+      - name: Create XY-Environment
         run: |
+          # Buat Folder Kerja
+          $paths = "C:\XYTOOLS\Coding", "C:\XYTOOLS\Santuy", "C:\XYTOOLS\ScreenShot", "C:\XYTOOLS\Recording"
+          $paths | ForEach-Object { New-Item -Path $_ -ItemType Directory -Force }
+
+      - name: Configure System & Welcome Banner
+        run: |
+          # Aktifkan RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
-
-      - name: Create RDP User
-        run: |
-          $password = "P@ssw0rdKeamanan123!" # Ganti sesuka hati biar gampang
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
-          echo "TAILSCALE_PWD=$password" >> $env:GITHUB_ENV
-
-      - name: Install & Connect Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner
           
+          # Sambutan ala Windows Professional
+          $title = "XY-SYSTEM | AUTHENTICATED ACCESS"
+          $msg = "Welcome Back, Haekal!`n`nSystem: XY-RDP Server`nBrand: XY Project`nCopyright: PoweredBy Kall & XyTeam.`n`nEnjoy your session!"
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "legalnoticecaption" -Value $title
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "legalnoticetext" -Value $msg
+
+      - name: Create User from Secret
+        run: |
+          $pass = "${{ secrets.RDP_PASSWORD }}"
+          if (-not $pass) { $pass = "DefaultXY123!" } # Backup jika secret lupa diisi
+          $securePass = ConvertTo-SecureString $pass -AsPlainText -Force
+          New-LocalUser -Name "XY_User" -Password $securePass -AccountNeverExpires -Force
+          Add-LocalGroupMember -Group "Administrators" -Member "XY_User"
+          echo "XY_PWD=$pass" >> $env:GITHUB_ENV
+
+      - name: Install Tools & Tailscale
+        run: |
+          # Install Tailscale & Apps
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          choco install tailscale vscode vlc sharex -y --no-progress
+          
+          # Connect Tailscale
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=XY-SERVER
           $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Loop Keep-Alive (Max 6 Jam)
+      - name: Loop & Status
         run: |
-          Write-Host "=== RDP INFO ==="
-          Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "User: RDP"
-          Write-Host "Pass: $env:TAILSCALE_PWD"
-          Write-Host "================"
-          
+          Write-Host "XY-RDP AKTIF! IP: $env:TAILSCALE_IP | User: XY_User"
           $startTime = Get-Date
           while ($true) {
-              $now = Get-Date
-              $elapsed = $now - $startTime
-              
-              # Cetak status tiap 5 menit agar runner tidak dianggap idle
-              Write-Host "[$($now.ToString('HH:mm:ss'))] Sesi berjalan: $($elapsed.ToString('hh\:mm\:ss'))"
-              
-              # Cek status Tailscale
-              & "$env:ProgramFiles\Tailscale\tailscale.exe" status > $null
-              if ($LASTEXITCODE -ne 0) {
-                  Write-Host "Reconnecting Tailscale..."
-                  & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
-              }
-              
+              $elapsed = (Get-Date) - $startTime
+              if ($elapsed.TotalMinutes -gt 350) { exit 0 }
+              Write-Host "Sesi XY Berjalan: $($elapsed.ToString('hh\:mm\:ss'))"
               Start-Sleep -Seconds 300
-              
-              # Safety exit di jam ke 5.5 agar workflow berikutnya bisa ambil alih dengan mulus
-              if ($elapsed.TotalMinutes -gt 330) { 
-                  Write-Host "Sesi hampir habis (6 jam). Menunggu scheduler berikutnya..."
-                  exit 0 
-              }
           }
